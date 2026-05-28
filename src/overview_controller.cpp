@@ -773,8 +773,6 @@ bool blitFramebufferRegion(Render::IFramebuffer& sourceFramebuffer, Render::IFra
 
     glDisable(GL_SCISSOR_TEST);
     glBindFramebuffer(GL_FRAMEBUFFER, *targetFramebufferId);
-    glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
-    glClear(GL_COLOR_BUFFER_BIT);
 
     glBindFramebuffer(GL_READ_FRAMEBUFFER, *sourceFramebufferId);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, *targetFramebufferId);
@@ -1007,8 +1005,12 @@ bool renderGaussianBlurPass(Render::IFramebuffer& sourceFramebuffer, Render::IFr
     glViewport(0, 0, static_cast<GLsizei>(std::lround(targetFramebuffer.m_size.x)), static_cast<GLsizei>(std::lround(targetFramebuffer.m_size.y)));
     glDisable(GL_BLEND);
     glDisable(GL_SCISSOR_TEST);
+    
+    GLfloat previousClearColor[4] = {};
+    glGetFloatv(GL_COLOR_CLEAR_VALUE, previousClearColor);
     glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
     glClear(GL_COLOR_BUFFER_BIT);
+    glClearColor(previousClearColor[0], previousClearColor[1], previousClearColor[2], previousClearColor[3]);
 
     const auto& pipeline = gaussianBlurPipeline();
     glUseProgram(pipeline.program);
@@ -2232,7 +2234,8 @@ void OverviewController::renderStage(eRenderStage stage) {
     }
 
     setFullscreenRenderOverride(true);
-    expandRenderDamageToFullMonitor(monitor);
+    if (stage == RENDER_POST_WALLPAPER || stage == RENDER_POST_WALLPAPER)
+        expandRenderDamageToFullMonitor(monitor);
 
     if (stage == RENDER_POST_WALLPAPER) {
         updateOverviewWorkspaceTransition();
@@ -8298,7 +8301,7 @@ void OverviewController::beginOpen(const PHLMONITOR& monitor, ScopeOverride requ
     setFullscreenRenderOverride(true);
     refreshWorkspaceStripSnapshots();
     g_pHyprRenderer->m_directScanoutBlocked = true;
-    m_postOpenRefreshFrames = 3;
+    m_postOpenRefreshFrames = 6;
     if (!m_suppressInitialHoverUpdate)
         updateHoveredFromPointer(false, false, false, false, "opening-complete");
 
@@ -8942,7 +8945,7 @@ void OverviewController::updateAnimation() {
         m_state.animationProgress = 1.0;
         m_state.animationFromVisual = 1.0;
         m_state.animationToVisual = 1.0;
-        m_postOpenRefreshFrames = std::max<std::size_t>(m_postOpenRefreshFrames, 3);
+        m_postOpenRefreshFrames = std::max<std::size_t>(m_postOpenRefreshFrames, 6);
         if (debugLogsEnabled())
             debugLog("[hymission] anim opening complete");
         updateSelectedWindowLayout({});
@@ -10097,7 +10100,10 @@ void OverviewController::renderWorkspaceStripSnapshot(WorkspaceStripEntry& entry
         }
 
         CRegion fakeDamage{0, 0, static_cast<int>(std::lround(renderFramebuffer->m_size.x)), static_cast<int>(std::lround(renderFramebuffer->m_size.y))};
-        g_pHyprRenderer->beginFullFakeRender(monitor, fakeDamage, renderFramebuffer);
+        if (!g_pHyprRenderer->beginFullFakeRender(monitor, fakeDamage, renderFramebuffer)) {
+            g_pHyprRenderer->m_renderData.blockScreenShader = previousBlockScreenShader;
+            goto cleanup;
+        }
         g_pHyprRenderer->draw(CClearPassElement::SClearData{.color = CHyprColor{0.05, 0.06, 0.08, 1.0}}, fakeDamage);
         renderBackgroundLayers(renderNow);
         if (renderWorkspaceContents && targetWorkspace && renderWindowFn) {
@@ -10123,6 +10129,7 @@ void OverviewController::renderWorkspaceStripSnapshot(WorkspaceStripEntry& entry
                                   makeRect(0.0, 0.0, snapshot->framebuffer->m_size.x, snapshot->framebuffer->m_size.y));
         }
     }
+cleanup:
     if (renderWorkspaceContents) {
         applyFullscreenOverrideForState(m_stripPreviewContext.state, false);
         m_stripPreviewContext.state = {};
